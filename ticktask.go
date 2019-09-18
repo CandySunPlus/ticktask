@@ -10,13 +10,15 @@ type key string
 
 var tickAt = key("tickAt")
 
-type TaskFn func(ctx context.Context) error
+type TaskFn func(context.Context) error
 type Option func(*TickTaskOptions)
+type OnRetryFn func(uint, error)
 
 type TickTaskOptions struct {
 	interval   time.Duration
 	retryDelay time.Duration
-	attempts   int
+	onRetry    OnRetryFn
+	attempts   uint
 }
 
 type tickTask struct {
@@ -36,7 +38,13 @@ func Interval(interval time.Duration) Option {
 	}
 }
 
-func Retry(attempts int, retryDelay time.Duration) Option {
+func OnRetry(onRetryFn OnRetryFn) Option {
+	return func(opts *TickTaskOptions) {
+		opts.onRetry = onRetryFn
+	}
+}
+
+func Retry(attempts uint, retryDelay time.Duration) Option {
 	return func(opts *TickTaskOptions) {
 		opts.retryDelay = retryDelay
 		opts.attempts = attempts
@@ -61,20 +69,25 @@ func NewTickTask(taskFn TaskFn, opts ...Option) *tickTask {
 	}
 }
 
-func (tt *tickTask) callTaskFn(ctx context.Context, attempts int) {
-	if err := tt.taskFn(ctx); err != nil {
-		if attempts--; attempts >= 0 {
+func (tt *tickTask) callTaskFn(ctx context.Context) {
+	var n uint = 1
+	for n < tt.opts.attempts+1 {
+		if err := tt.taskFn(ctx); err != nil {
+			tt.opts.onRetry(n, err)
+			if n == tt.opts.attempts {
+				return
+			}
 			time.Sleep(tt.opts.retryDelay)
-			tt.callTaskFn(ctx, attempts)
+		} else {
 			return
 		}
-		fmt.Printf("retry task fault %d times: %s \n", tt.opts.attempts+1, err)
+		n++
 	}
 }
 
 func (tt *tickTask) StartAndRun(ctx context.Context) {
 	ctx = context.WithValue(ctx, tickAt, time.Now())
-	go tt.callTaskFn(ctx, tt.opts.attempts)
+	go tt.callTaskFn(ctx)
 	tt.Start(ctx)
 }
 
@@ -89,7 +102,7 @@ func (tt *tickTask) Start(ctx context.Context) {
 				return
 			case t := <-ticker.C:
 				ctx = context.WithValue(ctx, tickAt, t)
-				go tt.callTaskFn(ctx, tt.opts.attempts)
+				go tt.callTaskFn(ctx)
 			}
 		}
 	}()

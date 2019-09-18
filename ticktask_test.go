@@ -2,6 +2,7 @@ package ticktask
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -13,25 +14,19 @@ func TestTaskContext(t *testing.T) {
 	start := time.Now()
 
 	task := NewTickTask(func(ctx context.Context) error {
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Println("task stop with context done")
-				return nil
-			default:
-				if tickAt, exists := GetTickAt(ctx); exists {
-					fmt.Printf("tick task run at %s \n", tickAt)
-				}
-				time.Sleep(time.Second * 2)
-			}
+		if tickAt, exists := GetTickAt(ctx); exists {
+			fmt.Printf("tick task run at %s \n", tickAt)
 		}
-	}, Interval(time.Second*2))
+		return errors.New("hello")
+	}, Interval(time.Second*2), OnRetry(func(n uint, err error) {
+		fmt.Printf("retry %d times: %s \n", n, err)
+	}), Retry(3, time.Millisecond * 500))
 
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*5)
 
 	defer cancel()
 
-	task.Start(ctx)
+	task.StartAndRun(ctx)
 
 	task.Join()
 
